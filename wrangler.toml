@@ -1,18 +1,9 @@
 # Cloudflare Pages configuration - used by `wrangler pages deploy` and by
-# Git-integration builds. The optional KV binding below powers the Pages
-# Functions in /functions (leaderboard API).
+# Git-integration builds.
 #
-# To enable the leaderboard API:
-#   1. npx wrangler kv namespace create LEADERBOARD
-#   2. paste the printed id into the block below and uncomment it
-#
-# If you skip this, the static game still deploys fine and the frontend
-# falls back to a localStorage leaderboard automatically.
+# DEAD HOURS is fully static: no KV, no Pages Functions, no Worker.
+# The leaderboard is stored in the player's own browser (localStorage).
 
 name = "zombie-fight"
 compatibility_date = '2024-11-01'
 pages_build_output_dir = 'dist'
-
-# [[kv_namespaces]]
- binding = 'LEADERBOARD'
- id = '0b4527d56b3447fba40b959dcdd1c023'
