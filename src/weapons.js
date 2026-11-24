@@ -1,8 +1,9 @@
 /* ============================================================
    DEAD HOURS - weapons
-   Three guns built from primitives (no model files), hip/ADS
+   Five guns built from primitives (no model files), hip/ADS
    poses, sway + bob + recoil animation, hitscan raycasting with
-   spread, tracers, muzzle flash light, ejected casings.
+   spread, tracers, muzzle flash light, ejected casings and a
+   weapon-mounted tactical flashlight (L to toggle).
    ============================================================ */
 
 import * as THREE from 'three';
@@ -13,7 +14,7 @@ const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 
 export class WeaponSystem {
-  constructor(camera, scene, TEX, particles, decals, audio, ui, world) {
+  constructor(camera, scene, TEX, particles, decals, audio, ui, world, quality = 'high') {
     this.camera = camera;
     this.scene = scene;
     this.TEX = TEX;
@@ -22,6 +23,7 @@ export class WeaponSystem {
     this.audio = audio;
     this.ui = ui;
     this.world = world;
+    this.quality = quality;
 
     this.raycaster = new THREE.Raycaster();
     this.raycaster.far = 180;
@@ -58,6 +60,7 @@ export class WeaponSystem {
     this.flashTime = 0;
 
     this._buildViewModels();
+    this._buildFlashlight();
     this._buildTracers();
     this._buildCasings();
 
@@ -76,17 +79,18 @@ export class WeaponSystem {
       roughness: 1, metalness: 0.85, envMapIntensity: 1.1, color: 0xb8bcc2,
     });
     const black = new THREE.MeshStandardMaterial({ color: 0x17191c, roughness: 0.55, metalness: 0.6, envMapIntensity: 0.9 });
+    const poly = new THREE.MeshStandardMaterial({ color: 0x22262b, roughness: 0.7, metalness: 0.15, envMapIntensity: 0.6 });
     const wood = new THREE.MeshStandardMaterial({
       map: T.wood.map, normalMap: T.wood.normal, roughness: 0.8, envMapIntensity: 0.4,
     });
-    return { dark, black, wood };
+    return { dark, black, poly, wood };
   }
 
   _buildViewModels() {
     const M = this._mats();
     this.models = [];
 
-    // ---- pistol ----
+    // ---- 0: pistol ----
     {
       const g = new THREE.Group();
       const slide = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.052, 0.2), M.black);
@@ -108,7 +112,7 @@ export class WeaponSystem {
       this.models.push(g);
     }
 
-    // ---- rifle ----
+    // ---- 1: rifle ----
     {
       const g = new THREE.Group();
       const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.062, 0.26), M.dark);
@@ -135,7 +139,49 @@ export class WeaponSystem {
       this.models.push(g);
     }
 
-    // ---- shotgun ----
+    // ---- 2: SMG (Vector-style) ----
+    {
+      const g = new THREE.Group();
+      const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.058, 0.24), M.poly);
+      receiver.position.set(0, 0.012, -0.12);
+      // upper rail
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.016, 0.3), M.black);
+      rail.position.set(0, 0.05, -0.14);
+      // short barrel + shroud
+      const shroud = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.12, 8), M.black);
+      shroud.rotation.x = Math.PI / 2;
+      shroud.position.set(0, 0.012, -0.3);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.07, 8), M.dark);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.012, -0.38);
+      // vertical foregrip
+      const foregrip = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.085, 0.035), M.poly);
+      foregrip.position.set(0, -0.045, -0.22);
+      // mag inside the grip
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.1, 0.05), M.poly);
+      grip.position.set(0, -0.058, -0.04);
+      grip.rotation.x = 0.12;
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.11, 0.042), M.black);
+      mag.position.set(0, -0.13, -0.015);
+      mag.rotation.x = 0.12;
+      // folding stock bar
+      const stockBar = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.016, 0.14), M.dark);
+      stockBar.position.set(0, 0.03, 0.06);
+      const stockPlate = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.07, 0.014), M.dark);
+      stockPlate.position.set(0, 0.012, 0.13);
+      // red-dot sight
+      const dotBody = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.045), M.black);
+      dotBody.position.set(0, 0.072, -0.17);
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(0.006, 8), new THREE.MeshBasicMaterial({ color: 0xff3020 }));
+      dot.position.set(0, 0.072, -0.194);
+      g.add(receiver, rail, shroud, barrel, foregrip, grip, mag, stockBar, stockPlate, dotBody, dot);
+      g.userData.muzzle = new THREE.Object3D();
+      g.userData.muzzle.position.set(0, 0.012, -0.42);
+      g.add(g.userData.muzzle);
+      this.models.push(g);
+    }
+
+    // ---- 3: shotgun ----
     {
       const g = new THREE.Group();
       const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.5, 10), M.dark);
@@ -160,6 +206,54 @@ export class WeaponSystem {
       this.models.push(g);
     }
 
+    // ---- 4: LMG (M249-style) ----
+    {
+      const g = new THREE.Group();
+      const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.075, 0.34), M.dark);
+      receiver.position.set(0, 0.005, -0.14);
+      // barrel shroud with heat ribs
+      const shroud = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.3, 10), M.black);
+      shroud.rotation.x = Math.PI / 2;
+      shroud.position.set(0, 0.02, -0.44);
+      for (let i = 0; i < 4; i++) {
+        const rib = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.006, 0.012), M.black);
+        rib.position.set(0, 0.04, -0.33 - i * 0.07);
+        g.add(rib);
+      }
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.16, 8), M.dark);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.02, -0.64);
+      const flashHider = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.014, 0.05, 8), M.black);
+      flashHider.rotation.x = Math.PI / 2;
+      flashHider.position.set(0, 0.02, -0.73);
+      // box mag under the feed tray
+      const boxMag = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.11, 0.12), M.poly);
+      boxMag.position.set(0.012, -0.085, -0.1);
+      boxMag.rotation.z = -0.06;
+      // solid stock + carry handle
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.09, 0.2), M.poly);
+      stock.position.set(0, -0.01, 0.16);
+      const carry = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.05, 0.016), M.dark);
+      carry.position.set(0, 0.062, -0.05);
+      const carryTop = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.014, 0.1), M.dark);
+      carryTop.position.set(0, 0.084, -0.05);
+      // folded bipod legs
+      for (const bx of [-0.022, 0.022]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.16, 0.008), M.dark);
+        leg.position.set(bx, -0.045, -0.5);
+        leg.rotation.z = bx * 6;
+        g.add(leg);
+      }
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.09, 0.05), M.poly);
+      grip.position.set(0, -0.07, 0.03);
+      grip.rotation.x = 0.22;
+      g.add(receiver, shroud, barrel, flashHider, boxMag, stock, carry, carryTop, grip);
+      g.userData.muzzle = new THREE.Object3D();
+      g.userData.muzzle.position.set(0, 0.02, -0.77);
+      g.add(g.userData.muzzle);
+      this.models.push(g);
+    }
+
     this.holder = new THREE.Group();
     this.camera.add(this.holder);
     for (const g of this.models) {
@@ -168,6 +262,66 @@ export class WeaponSystem {
       this.holder.add(g);
     }
     this.models[0].visible = true;
+  }
+
+  /* ==================== tactical flashlight ==================== */
+
+  _buildFlashlight() {
+    this.flashlightOn = true;
+    this.torch = new THREE.SpotLight(0xfff1d6, 55, 42, 0.52, 0.45, 1.4);
+    this.torch.position.set(0.06, -0.05, -0.28);
+    this.torch.castShadow = !!CONFIG.fx.flashlightShadow[this.quality];
+    if (this.torch.castShadow) {
+      this.torch.shadow.mapSize.set(1024, 1024);
+      this.torch.shadow.bias = -0.0022;
+      this.torch.shadow.normalBias = 0.02;
+      this.torch.shadow.camera.near = 0.3;
+      this.torch.shadow.camera.far = 45;
+    }
+    this.torchTarget = new THREE.Object3D();
+    this.torchTarget.position.set(0, -0.06, -8);
+    this.torch.target = this.torchTarget;
+    this.holder.add(this.torch, this.torchTarget);
+    this.torch.visible = false;   // comes on when a run starts (reset)
+
+    // visible lamp housing under the barrel
+    const lampGeo = new THREE.CylinderGeometry(0.012, 0.014, 0.05, 8);
+    const lampMat = new THREE.MeshStandardMaterial({ color: 0x1c1f24, roughness: 0.4, metalness: 0.8 });
+    this.torchMesh = new THREE.Mesh(lampGeo, lampMat);
+    this.torchMesh.rotation.x = Math.PI / 2;
+    this.torchMesh.position.set(0.06, -0.05, -0.27);
+    this.holder.add(this.torchMesh);
+    this.torchLens = new THREE.Mesh(
+      new THREE.CircleGeometry(0.011, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfff1d6 })
+    );
+    this.torchLens.position.set(0.06, -0.05, -0.296);
+    this.torchLens.rotation.y = Math.PI;
+    this.holder.add(this.torchLens);
+    this.torchFlicker = 0;
+  }
+
+  setFlashlight(on) {
+    this.flashlightOn = on;
+    this.torch.visible = on;
+    this.torchLens.material.color.setHex(on ? 0xfff1d6 : 0x26282c);
+  }
+
+  toggleFlashlight() {
+    this.setFlashlight(!this.flashlightOn);
+    return this.flashlightOn;
+  }
+
+  applyQuality(q) {
+    this.quality = q;
+    this.torch.castShadow = !!CONFIG.fx.flashlightShadow[q];
+    if (this.torch.castShadow) {
+      this.torch.shadow.mapSize.set(1024, 1024);
+      this.torch.shadow.bias = -0.0022;
+      this.torch.shadow.normalBias = 0.02;
+      this.torch.shadow.camera.near = 0.3;
+      this.torch.shadow.camera.far = 45;
+    }
   }
 
   /* ==================== tracers & casings ==================== */
@@ -281,9 +435,13 @@ export class WeaponSystem {
     this.flashSprite.position.copy(muzzle);
     this.flashSprite.material.rotation = Math.random() * Math.PI * 2;
     this.flashSprite.material.opacity = 1;
-    this.flashSprite.scale.set(0.24 + Math.random() * 0.14, 0.24 + Math.random() * 0.14, 1);
+    const big = w.def.id === 'lmg' || w.def.id === 'shotgun';
+    this.flashSprite.scale.set(
+      (big ? 0.34 : 0.24) + Math.random() * 0.14,
+      (big ? 0.34 : 0.24) + Math.random() * 0.14, 1
+    );
     this.flashLight.position.copy(muzzle);
-    this.flashLight.intensity = 60;
+    this.flashLight.intensity = big ? 85 : 60;
     this.flashTime = 0.05;
 
     const dir = _v3.set(0, 0, 0);
@@ -346,6 +504,15 @@ export class WeaponSystem {
       this.flashSprite.material.opacity = Math.min(1, this.flashTime / 0.05);
     }
 
+    // flashlight flicker (loose contact, very subtle)
+    if (this.flashlightOn) {
+      this.torchFlicker -= dt;
+      if (this.torchFlicker <= 0) {
+        this.torchFlicker = 0.12 + Math.random() * 0.3;
+        this.torch.intensity = 55 * (Math.random() < 0.06 ? 0.72 : 0.96 + Math.random() * 0.08);
+      }
+    }
+
     // reload timer
     if (w.reloading > 0) {
       w.reloading -= dt;
@@ -360,10 +527,12 @@ export class WeaponSystem {
       }
     }
 
-    // weapon switching
+    // weapon switching (1-5)
     if (input.keys.has('Digit1')) this.switchTo(0);
     if (input.keys.has('Digit2')) this.switchTo(1);
     if (input.keys.has('Digit3')) this.switchTo(2);
+    if (input.keys.has('Digit4')) this.switchTo(3);
+    if (input.keys.has('Digit5')) this.switchTo(4);
 
     // ADS
     this.wantAds = input.rmb && !player.sprinting && w.reloading <= 0;
@@ -490,6 +659,7 @@ export class WeaponSystem {
     this.recoilAnim = 0;
     this.reloadAnim = 0;
     this.boostUntil = -1;
+    this.setFlashlight(true);   // nights are dark - lamp comes on ready
     this.ui.setReloading(false);
     this._hud();
   }

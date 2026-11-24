@@ -59,6 +59,13 @@ export const CONFIG = {
       reloadTime: 2.6, spread: 0.052, recoilPitch: 3.4, recoilYaw: 0.5,
       hipPos: [0.25, -0.25, -0.55], adsPos: [0, -0.16, -0.38],
     },
+    {
+      id: 'lmg', name: 'M249 LMG',
+      damage: 30, rpm: 750, auto: true, pellets: 1,
+      mag: 80, reserve: 240,
+      reloadTime: 3.4, spread: 0.036, recoilPitch: 1.2, recoilYaw: 0.36,
+      hipPos: [0.28, -0.28, -0.58], adsPos: [0, -0.165, -0.42],
+    },
   ],
 
   zombies: {
@@ -66,11 +73,22 @@ export const CONFIG = {
     limbMultiplier: 0.7,
     separationRadius: 1.15,
     types: {
-      walker: { hp: 100, speed: [1.5, 2.3], damage: 9,  attackRange: 1.5, attackCooldown: 1.0, scale: 1,    points: 100 },
-      runner: { hp: 60,  speed: [3.9, 4.7], damage: 7,  attackRange: 1.4, attackCooldown: 0.8, scale: 0.92, points: 160 },
-      spitter: { hp: 130, speed: [1.8, 2.5], damage: 9, attackRange: 1.5, attackCooldown: 1.2, scale: 1.05, points: 250, spitCooldown: 2.4, spitSpeed: 13, spitDamage: 15 },
-      tank:   { hp: 340, speed: [1.0, 1.3], damage: 22, attackRange: 1.9, attackCooldown: 1.4, scale: 1.35, points: 400 },
+      walker:  { hp: 100, speed: [1.5, 2.3], damage: 9,  attackRange: 1.5, attackCooldown: 1.0, scale: 1,    points: 100 },
+      runner:  { hp: 60,  speed: [3.9, 4.7], damage: 7,  attackRange: 1.4, attackCooldown: 0.8, scale: 0.92, points: 160 },
+      spitter: {
+        hp: 130, speed: [1.8, 2.5], damage: 9, attackRange: 1.5, attackCooldown: 1.2,
+        scale: 1.05, points: 250,
+        spitCooldown: 2.6, spitSpeed: 13, spitDamage: 15,
+        spitMinRange: 6, spitMaxRange: 26, spitArc: 3.2,
+      },
+      tank:    { hp: 340, speed: [1.0, 1.3], damage: 22, attackRange: 1.9, attackCooldown: 1.4, scale: 1.35, points: 400 },
+      bloater: { hp: 220, speed: [0.85, 1.15], damage: 12, attackRange: 1.7, attackCooldown: 1.6, scale: 1.28, points: 320 },
     },
+  },
+
+  bloater: {
+    explosionRadius: 4.2,
+    explosionDamage: 42,
   },
 
   waves: {
@@ -86,8 +104,10 @@ export const CONFIG = {
     runnerFromWave: 3,
     tankFromWave: 5,
     spitterFromWave: 4,
+    bloaterFromWave: 6,
     runnerRatio: 0.32,     // cap share of runners once introduced
     spitterRatio: 0.18,    // cap share of spitters once introduced
+    bloaterRatio: 0.06,    // cap share of bloaters once introduced
     spawnInterval: [0.9, 1.6],
     firstDelay: 3.5,
   },
@@ -121,6 +141,13 @@ export const CONFIG = {
     grassCount:    { low: 0,     medium: 150,   high: 260 },
     rainSpeed: 21,
     lightningEvery: [7, 18],   // s, random range
+
+    // v1.1 "unreal engine" pass extras
+    moonRays:      { low: false, medium: true, high: true },   // screen-space god rays from the moon
+    lensRain:      { low: false, medium: true, high: true },   // droplets running down the virtual lens
+    flashlightShadow: { low: false, medium: false, high: true },
+    puddleCount:   { low: 0,     medium: 8,    high: 14 },
+    fogCards:      { low: 0,     medium: 4,    high: 7 },
   },
 
   camera: {
