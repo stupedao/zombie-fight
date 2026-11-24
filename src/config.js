@@ -46,6 +46,13 @@ export const CONFIG = {
       hipPos: [0.24, -0.26, -0.55], adsPos: [0, -0.145, -0.36],
     },
     {
+      id: 'smg', name: 'VECTOR SMG',
+      damage: 19, rpm: 900, auto: true, pellets: 1,
+      mag: 33, reserve: 165,
+      reloadTime: 1.7, spread: 0.03, recoilPitch: 0.9, recoilYaw: 0.3,
+      hipPos: [0.24, -0.25, -0.52], adsPos: [0, -0.15, -0.35],
+    },
+    {
       id: 'shotgun', name: 'PUMP SHOTGUN',
       damage: 13, rpm: 78, auto: false, pellets: 9,
       mag: 6, reserve: 36,
@@ -61,6 +68,7 @@ export const CONFIG = {
     types: {
       walker: { hp: 100, speed: [1.5, 2.3], damage: 9,  attackRange: 1.5, attackCooldown: 1.0, scale: 1,    points: 100 },
       runner: { hp: 60,  speed: [3.9, 4.7], damage: 7,  attackRange: 1.4, attackCooldown: 0.8, scale: 0.92, points: 160 },
+      spitter: { hp: 130, speed: [1.8, 2.5], damage: 9, attackRange: 1.5, attackCooldown: 1.2, scale: 1.05, points: 250, spitCooldown: 2.4, spitSpeed: 13, spitDamage: 15 },
       tank:   { hp: 340, speed: [1.0, 1.3], damage: 22, attackRange: 1.9, attackCooldown: 1.4, scale: 1.35, points: 400 },
     },
   },
@@ -77,7 +85,9 @@ export const CONFIG = {
     maxAliveCap: 22,
     runnerFromWave: 3,
     tankFromWave: 5,
+    spitterFromWave: 4,
     runnerRatio: 0.32,     // cap share of runners once introduced
+    spitterRatio: 0.18,    // cap share of spitters once introduced
     spawnInterval: [0.9, 1.6],
     firstDelay: 3.5,
   },
@@ -106,6 +116,7 @@ export const CONFIG = {
     shadowMapSize: { low: 0,     medium: 1024,  high: 2048 },
     pixelRatioCap: { low: 1,     medium: 1.25,  high: 2 },
     bloom:         { low: false, medium: true,  high: true },
+    ssao:          { low: false, medium: true,  high: true },
     rainCount:     { low: 0,     medium: 900,   high: 1700 },
     grassCount:    { low: 0,     medium: 150,   high: 260 },
     rainSpeed: 21,

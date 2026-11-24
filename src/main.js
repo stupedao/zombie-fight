@@ -1,7 +1,7 @@
 /* ============================================================
    DEAD HOURS - bootstrap & game loop
    Renderer + cinematic post-processing (ACES filmic tone mapping,
-   UnrealBloom, FXAA, film grain / chromatic aberration / vignette),
+   SSAO, UnrealBloom, FXAA, film grain / chromatic aberration / vignette),
    fixed 60 Hz simulation decoupled from rendering, input,
    state machine (menu / playing / paused / dying / over),
    score & stats, leaderboard wiring.
@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SAOPass } from 'three/addons/postprocessing/SAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
@@ -197,9 +198,14 @@ class Game {
       this.stats.score += res.headshot ? CONFIG.score.headHit : CONFIG.score.bodyHit;
     };
 
-    // post-processing: render -> bloom -> tonemap/sRGB -> FXAA -> cinematic
+    // post-processing: render -> SSAO -> bloom -> tonemap/sRGB -> FXAA -> cinematic
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.saoPass = new SAOPass(this.scene, this.camera, window.innerWidth, window.innerHeight);
+    this.saoPass.kernelRadius = 10;
+    this.saoPass.minDistance = 0.0015;
+    this.saoPass.maxDistance = 0.14;
+    this.composer.addPass(this.saoPass);
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
       0.55, 0.85, 0.5      // strength, radius, threshold
@@ -226,6 +232,7 @@ class Game {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
+    if (this.saoPass) this.saoPass.setSize(w, h);
     this._updatePassResolutions();
   }
 
@@ -347,6 +354,7 @@ class Game {
     this.world.applyQuality(q);
     this.particles.setFog(this.world.fog.color, this.world.fog.density);
     this.bloomPass.enabled = !!CONFIG.fx.bloom[q];
+    if (this.saoPass) this.saoPass.enabled = !!CONFIG.fx.ssao[q];
   }
 
   /* ==================== state transitions ==================== */
@@ -574,7 +582,7 @@ class Game {
     }
     this.fxDamage = Math.max(0, this.fxDamage - dt * 1.5);
 
-    // render - the composer chain IS the look (bloom + tonemap + FXAA + film pass)
+    // render - the composer chain IS the look (SSAO + bloom + tonemap + FXAA + film pass)
     this.composer.render();
 
     this.ui.tick(dt);

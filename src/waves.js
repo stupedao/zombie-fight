@@ -41,7 +41,7 @@ export class WaveManager {
   }
 
   get remaining() {
-    return this.queue.walker + this.queue.runner + this.queue.tank + this.zm.aliveCount;
+    return this.queue.walker + this.queue.runner + this.queue.tank + this.queue.spitter + this.zm.aliveCount;
   }
 
   _nextWave() {
@@ -54,11 +54,14 @@ export class WaveManager {
     const runners = this.wave >= W.runnerFromWave
       ? Math.round(count * Math.min(W.runnerRatio, 0.1 + this.wave * 0.03))
       : 0;
+    const spitters = this.wave >= W.spitterFromWave
+      ? Math.round(count * Math.min(W.spitterRatio, 0.06 + this.wave * 0.015))
+      : 0;
     const tanks = this.wave >= W.tankFromWave
       ? Math.min(4, Math.floor((this.wave - W.tankFromWave) / 3) + 1)
       : 0;
-    const walkers = Math.max(0, count - runners - tanks);
-    this.queue = { walker: walkers, runner: runners, tank: tanks };
+    const walkers = Math.max(0, count - runners - spitters - tanks);
+    this.queue = { walker: walkers, runner: runners, tank: tanks, spitter: spitters };
     this.hpMult = Math.min(W.hpMaxMult, 1 + W.hpGrowth * (this.wave - 1));
     this.speedMult = Math.min(W.speedMaxMult, 1 + W.speedGrowth * (this.wave - 1));
 
@@ -66,7 +69,9 @@ export class WaveManager {
 
     const sub = WAVE_SUBS[this.subIdx % WAVE_SUBS.length];
     this.subIdx++;
-    const subExtra = tanks > 0 ? ` - ${tanks} BRUTE${tanks > 1 ? 'S' : ''} INBOUND` : '';
+    let subExtra = '';
+    if (tanks > 0) subExtra = ` - ${tanks} BRUTE${tanks > 1 ? 'S' : ''} INBOUND`;
+    else if (spitters > 0) subExtra = ` - ACID SPITTER${spitters > 1 ? 'S' : ''} DETECTED`;
     this.ui.banner(`WAVE ${this.wave}`, sub + subExtra);
     this.ui.setWave(this.wave, this.remaining);
     this.audio.waveHorn();
@@ -75,13 +80,15 @@ export class WaveManager {
   _pickType() {
     const q = this.queue;
     // prefer spawning tanks a bit later in the wave
-    const total = q.walker + q.runner + q.tank;
+    const total = q.walker + q.runner + q.tank + q.spitter;
     if (total <= 0) return null;
     const r = Math.random() * total;
     if (r < q.tank && q.tank > 0 && total < 8) return 'tank';
-    if (r < q.tank + q.runner && q.runner > 0) return 'runner';
+    if (r < q.tank + q.spitter && q.spitter > 0) return 'spitter';
+    if (r < q.tank + q.spitter + q.runner && q.runner > 0) return 'runner';
     if (q.walker > 0) return 'walker';
     if (q.runner > 0) return 'runner';
+    if (q.spitter > 0) return 'spitter';
     if (q.tank > 0) return 'tank';
     return null;
   }
@@ -101,7 +108,7 @@ export class WaveManager {
 
     if (this.state === 'active') {
       // spawn scheduling
-      if (this.queue.walker + this.queue.runner + this.queue.tank > 0) {
+      if (this.queue.walker + this.queue.runner + this.queue.tank + this.queue.spitter > 0) {
         this.spawnTimer -= dt;
         if (this.spawnTimer <= 0 && this.zm.aliveCount < W.maxAliveCap) {
           const type = this._pickType();
@@ -129,7 +136,7 @@ export class WaveManager {
   reset() {
     this.state = 'idle';
     this.wave = 0;
-    this.queue = { walker: 0, runner: 0, tank: 0 };
+    this.queue = { walker: 0, runner: 0, tank: 0, spitter: 0 };
     this.timer = 0;
     this.ui.setIntermission(null);
   }
