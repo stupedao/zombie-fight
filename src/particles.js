@@ -1,8 +1,6 @@
 /* ============================================================
-   DEAD HOURS - pooled GPU particles + decals
-   One THREE.Points draw call for every particle in the world,
-   driven by a small custom shader (per-particle size, color,
-   life-fade). Blood pools / bullet holes are pooled planes.
+   DEAD HOURS - particles + decals
+   v1.1: adds toxic acid splashes for the spitter zombies.
    ============================================================ */
 
 import * as THREE from 'three';
@@ -128,6 +126,37 @@ export class Particles {
         12, 2.5, 0
       );
     }
+  }
+
+  /* -------- NEW v1.1: toxic acid (spitter projectiles) -------- */
+
+  acidSplash(point, amount = 12) {
+    for (let k = 0; k < amount; k++) {
+      const sp = 1 + Math.random() * 3.5;
+      this._emit(
+        point.x, point.y, point.z,
+        (Math.random() - 0.5) * sp,
+        0.8 + Math.random() * 2.2,
+        (Math.random() - 0.5) * sp,
+        0.35 + Math.random() * 0.35, 0.8 + Math.random() * 0.2, 0.12 + Math.random() * 0.1,
+        0.045 + Math.random() * 0.08,
+        0.5 + Math.random() * 0.4,
+        10, 2.2, 0
+      );
+    }
+  }
+
+  acidTrail(point) {
+    this._emit(
+      point.x + (Math.random() - 0.5) * 0.06,
+      point.y + (Math.random() - 0.5) * 0.06,
+      point.z + (Math.random() - 0.5) * 0.06,
+      (Math.random() - 0.5) * 0.3, 0.1 + Math.random() * 0.4, (Math.random() - 0.5) * 0.3,
+      0.5, 0.9, 0.2,
+      0.04 + Math.random() * 0.05,
+      0.35 + Math.random() * 0.25,
+      0.5, 2.4, 0.6
+    );
   }
 
   sparks(point, normal) {

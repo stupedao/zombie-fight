@@ -1,10 +1,11 @@
 /* ============================================================
    DEAD HOURS - bootstrap & game loop
    Renderer + cinematic post-processing (ACES filmic tone mapping,
-   SSAO, UnrealBloom, FXAA, film grain / chromatic aberration / vignette),
-   fixed 60 Hz simulation decoupled from rendering, input,
-   state machine (menu / playing / paused / dying / over),
-   score & stats, leaderboard wiring.
+   SSAO, UnrealBloom, FXAA, film grain / chromatic aberration /
+   vignette / moon god-rays / raindrops on the lens), fixed 60 Hz
+   simulation decoupled from rendering, input, state machine
+   (menu / playing / paused / dying / over), score & stats,
+   leaderboard wiring.
    ============================================================ */
 
 import * as THREE from 'three';
@@ -34,8 +35,10 @@ const STEP = 1 / 60;
 /* ============================================================
    Cinematic pass - the "filmic" layer.
    Runs AFTER tone mapping (OutputPass) on the sRGB buffer:
-   chromatic aberration at the frame edges, an animated film
-   grain, a soft vignette, a cold-night color grade and the
+   moon god-rays (screen-space radial light shafts that flare
+   up during lightning), rain droplets running down the virtual
+   lens, chromatic aberration at the frame edges, an animated
+   film grain, a soft vignette, a cold-night color grade and the
    damage / death screen states. Cheap: one fullscreen quad.
    ============================================================ */
 
@@ -47,6 +50,11 @@ const CinematicShader = {
     uDeath: { value: 0 },    // 0..1 drain toward cold sepia
     uGrain: { value: 0.05 },
     uResolution: { value: new THREE.Vector2(1, 1) },
+    uMoonPos: { value: new THREE.Vector2(0.5, 0.5) },  // screen uv of the moon
+    uMoonVis: { value: 0 },   // 0/1 moon on screen
+    uMoonStr: { value: 0 },   // ray strength (lightning boosts it)
+    uRain: { value: 0 },      // 0/1 rain droplets on lens
+    uAspect: { value: 1.77 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -57,16 +65,42 @@ const CinematicShader = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform float uTime, uDamage, uDeath, uGrain;
-    uniform vec2 uResolution;
+    uniform float uTime, uDamage, uDeath, uGrain, uMoonVis, uMoonStr, uRain, uAspect;
+    uniform vec2 uResolution, uMoonPos;
     varying vec2 vUv;
 
     float hash(vec2 p) {
       return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
     }
 
+    // one grid layer of sliding lens droplets -> uv distortion
+    vec2 dropLayer(vec2 uv, vec2 cells, float t, float sp) {
+      vec2 cuv = uv * cells;
+      vec2 id = floor(cuv);
+      vec2 f = fract(cuv);
+      float h = hash(id + 17.3);
+      if (h < 0.58) return vec2(0.0);
+      // droplet slides down the lens
+      float yy = fract(f.y + t * sp * (0.15 + h * 0.4) + h * 9.0);
+      vec2 c = vec2(0.3 + 0.4 * fract(h * 43.7), yy);
+      vec2 d = f - c;
+      d.y /= 0.6;                     // elongated streak
+      float r = length(d);
+      if (r > 0.22) return vec2(0.0);
+      // push the sample toward the droplet rim (fake refraction)
+      return (d / max(r, 1e-4)) * (0.22 - r) * 0.55;
+    }
+
     void main() {
       vec2 uv = vUv;
+
+      // ---- rain droplets running down the lens ----
+      if (uRain > 0.001) {
+        vec2 drop = dropLayer(uv, vec2(6.0 * uAspect, 3.5), uTime, 1.0) * 0.55
+                  + dropLayer(uv, vec2(12.0 * uAspect, 7.0), uTime * 1.35, 1.6) * 0.35;
+        uv += drop * uRain * 0.009;
+      }
+
       vec2 c = uv - 0.5;
       float r2 = dot(c, c);
 
@@ -76,6 +110,27 @@ const CinematicShader = {
       col.r = texture2D(tDiffuse, uv + off).r;
       col.g = texture2D(tDiffuse, uv).g;
       col.b = texture2D(tDiffuse, uv - off).b;
+
+      // ---- moon god-rays (radial light shafts) ----
+      if (uMoonVis > 0.001 && uMoonStr > 0.001) {
+        vec2 mUV = uMoonPos;
+        vec2 dir = mUV - uv;
+        float distMoon = length(dir);
+        vec2 stepv = dir / 20.0;
+        vec2 p = uv;
+        float decay = 1.0;
+        float ray = 0.0;
+        for (int i = 0; i < 20; i++) {
+          p += stepv;
+          vec3 s = texture2D(tDiffuse, clamp(p, 0.0, 1.0)).rgb;
+          float l = dot(s, vec3(0.299, 0.587, 0.114));
+          ray += max(0.0, l - 0.5) * decay;
+          decay *= 0.932;
+        }
+        ray /= 20.0;
+        float mask = smoothstep(1.5, 0.25, distMoon);
+        col += vec3(0.42, 0.52, 0.8) * ray * uMoonStr * mask * uMoonVis;
+      }
 
       // cold-night grade: blue shadows, neutral highs
       col = mix(col, col * vec3(0.97, 1.0, 1.07), 0.5);
@@ -125,6 +180,7 @@ class Game {
     this.simTime = 0;
     this.fxDamage = 0;
     this.fxDeath = 0;
+    this._moonNdc = new THREE.Vector3();
 
     this.loadBoards();
 
@@ -183,7 +239,7 @@ class Game {
     this.particles.setFog(this.world.fog.color, this.world.fog.density);
 
     this.player = new Player(this.camera, this.world, this.audio, this.ui);
-    this.weapons = new WeaponSystem(this.camera, this.scene, TEX, this.particles, this.decals, this.audio, this.ui, this.world);
+    this.weapons = new WeaponSystem(this.camera, this.scene, TEX, this.particles, this.decals, this.audio, this.ui, this.world, this.quality || 'high');
     this.zm = new ZombieManager(this.scene, this.world, TEX, this.particles, this.decals, this.audio, this.player);
     this.waves = new WaveManager(this.zm, this.ui, this.audio);
     this.pickups = new Pickups(this.scene, TEX, this.particles, this.audio, this.ui, this.player, this.weapons);
@@ -241,7 +297,10 @@ class Game {
     const w = Math.floor(window.innerWidth * pr);
     const h = Math.floor(window.innerHeight * pr);
     if (this.fxaaPass) this.fxaaPass.material.uniforms['resolution'].value.set(1 / w, 1 / h);
-    if (this.cinePass) this.cinePass.uniforms.uResolution.value.set(w, h);
+    if (this.cinePass) {
+      this.cinePass.uniforms.uResolution.value.set(w, h);
+      this.cinePass.uniforms.uAspect.value = window.innerWidth / Math.max(1, window.innerHeight);
+    }
   }
 
   /* ==================== input ==================== */
@@ -263,6 +322,10 @@ class Game {
       if (e.code === 'KeyF') {
         this.fpsOn = !this.fpsOn;
         this.ui.showFps(this.fpsOn);
+      }
+      if (e.code === 'KeyL') {
+        const on = this.weapons.toggleFlashlight();
+        this.ui.toast(on ? 'FLASHLIGHT ON' : 'FLASHLIGHT OFF');
       }
       if (e.code === 'KeyP') this._pause();
     });
@@ -355,6 +418,7 @@ class Game {
     this.particles.setFog(this.world.fog.color, this.world.fog.density);
     this.bloomPass.enabled = !!CONFIG.fx.bloom[q];
     if (this.saoPass) this.saoPass.enabled = !!CONFIG.fx.ssao[q];
+    this.weapons.applyQuality(q);
   }
 
   /* ==================== state transitions ==================== */
@@ -413,6 +477,7 @@ class Game {
     this.ui.hideGameOver();
     this.ui.showHud(false);
     this.ui.showMenu(true);
+    this.weapons.setFlashlight(false);   // don't light the menu backdrop
     this.audio.stopAmbient();
     this.loadBoards();
   }
@@ -427,15 +492,18 @@ class Game {
     if (z.type === 'bloater') this._bloaterExplosion(z);
   }
 
-  /** bloaters detonate when they die - acid blast + falloff damage */
+  /** bloaters detonate when they die - acid blast + falloff damage + shake */
   _bloaterExplosion(z) {
     const B = CONFIG.bloater;
     const p = z.group.position;
     this.particles.blood(new THREE.Vector3(p.x, 1.05 * z.scale, p.z), new THREE.Vector3(0, 1, 0), 34);
+    this.particles.acidSplash(new THREE.Vector3(p.x, 1.0 * z.scale, p.z), 30);
     this.particles.dust(new THREE.Vector3(p.x, 0.6, p.z), 18);
     this.decals.bloodPool(p.x, p.z, 1.7);
     const d = Math.hypot(p.x - this.player.pos.x, p.z - this.player.pos.z);
     this.audio.boom(d, this.zm._panToPlayer(z));
+    // proximity screenshake
+    this.player.shake = Math.min(1.6, this.player.shake + Math.max(0.15, 1.15 * (1 - d / B.explosionRadius)));
     if (d < B.explosionRadius && this.player.alive) {
       const dmg = Math.max(8, B.explosionDamage * (1 - d / B.explosionRadius));
       this._onPlayerHit(dmg);
@@ -573,12 +641,25 @@ class Game {
       }
     }
 
+    // lightning supercharges the bloom + moon rays
+    this.bloomPass.strength = 0.55 + (this.world.flashAmt || 0) * 1.25;
+
     // cinematic uniforms
     if (this.cinePass) {
       const u = this.cinePass.uniforms;
       u.uTime.value = now / 1000;
       u.uDamage.value = this.fxDamage;
       u.uDeath.value = this.fxDeath;
+
+      // moon screen position for the god-ray pass
+      this._moonNdc.copy(this.world.moonWorldPos).project(this.camera);
+      const onScreen = this._moonNdc.z > -1 && this._moonNdc.z < 1
+        && Math.abs(this._moonNdc.x) < 1.3 && Math.abs(this._moonNdc.y) < 1.3;
+      u.uMoonPos.value.set(this._moonNdc.x * 0.5 + 0.5, this._moonNdc.y * 0.5 + 0.5);
+      u.uMoonVis.value = onScreen ? 1 : 0;
+      u.uMoonStr.value = (CONFIG.fx.moonRays[this.quality || 'high'] ? 0.8 : 0)
+        * (1 + (this.world.flashAmt || 0) * 2.4);
+      u.uRain.value = (CONFIG.fx.lensRain[this.quality || 'high'] && this.world.rainCount > 0) ? 1 : 0;
     }
     this.fxDamage = Math.max(0, this.fxDamage - dt * 1.5);
 
