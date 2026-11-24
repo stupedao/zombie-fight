@@ -1,12 +1,17 @@
 /* ============================================================
    DEAD HOURS - world / arena
-   Night-time ruined block: PBR ground, ruined buildings, dead
-   trees, burning barrels, street lamps, rain, lightning, exp
-   fog, moonlit shadows and a far city silhouette. Also owns
-   the AABB colliders and zombie spawn ring.
+   Night-time ruined block: PBR ground, ruined buildings with
+   lit/flickering windows, dead trees, burning barrels, street
+   lamps, car wrecks, chain-link fences, power poles with
+   sagging wires + electric sparks, ground mist cards,
+   rain-reflection puddles, rain, lightning, exp fog, a
+   drifting cloud shell, moon halo, moonlit shadows and a far
+   city silhouette. Also owns the AABB colliders and the
+   zombie spawn ring.
    ============================================================ */
 
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CONFIG } from './config.js';
 import { buildEnvCanvas } from './textures.js';
 
@@ -26,6 +31,11 @@ export class World {
     this.barrels = [];
     this.lamps = [];
     this.fires = [];
+    this.litWindows = [];       // {mat, seed}
+    this.fogCards = [];         // {mesh, r, a, speed, y}
+    this.wires = [];            // {curve, len}
+    this.poles = [];
+    this.puddles = [];
 
     this.lightning = {
       next: 4 + Math.random() * 6,
@@ -33,14 +43,21 @@ export class World {
       strikes: 0,
       baseFogColor: new THREE.Color(0x090f1a),
     };
+    this.flashAmt = 0;          // 0..1 for main.js bloom/godray boosts
 
     this._rand = mulberry32(20261124);
 
     this._buildEnvironment();
     this._buildLights();
     this._buildArena();
+    this._buildCars();
+    this._buildFences();
+    this._buildPowerLines();
+    this._buildPuddles();
+    this._buildFogCards();
     this._buildRain();
     this._buildSpawns();
+    this.applyQuality(quality);
   }
 
   /* ==================== environment ==================== */
@@ -70,12 +87,31 @@ export class World {
     this.sky.renderOrder = -10;
     this.scene.add(this.sky);
 
-    // moon
+    // NEW: drifting cloud shell (slightly inside the sky dome, rotates slowly)
+    this.cloudMat = new THREE.MeshBasicMaterial({
+      map: T.clouds, transparent: true, side: THREE.BackSide,
+      fog: false, depthWrite: false, opacity: 0.9,
+    });
+    this.clouds = new THREE.Mesh(new THREE.SphereGeometry(400, 32, 20), this.cloudMat);
+    this.clouds.renderOrder = -9;
+    this.scene.add(this.clouds);
+
+    // moon + halo
     this.moonDir = new THREE.Vector3(0.45, 0.62, -0.64).normalize();
     const moonMat = new THREE.MeshBasicMaterial({ map: T.moon, fog: false });
     this.moon = new THREE.Mesh(new THREE.SphereGeometry(17, 24, 16), moonMat);
     this.moon.position.copy(this.moonDir).multiplyScalar(360);
     this.scene.add(this.moon);
+    this.moonWorldPos = this.moon.position;
+
+    const haloMat = new THREE.SpriteMaterial({
+      map: T.glow, color: 0xbfd2ff, transparent: true, opacity: 0.34,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    });
+    this.moonHalo = new THREE.Sprite(haloMat);
+    this.moonHalo.position.copy(this.moonDir).multiplyScalar(348);
+    this.moonHalo.scale.set(150, 150, 1);
+    this.scene.add(this.moonHalo);
 
     // far city silhouette
     const cityMat = new THREE.MeshBasicMaterial({ color: 0x0a0e17 });
@@ -122,6 +158,13 @@ export class World {
     this.flashLight.position.set(-40, 90, 30);
     this.scene.add(this.flashLight);
 
+    // NEW: shared burst light for power-line sparks
+    this.sparkLight = new THREE.PointLight(0x9fd4ff, 0, 30, 2);
+    this.sparkLight.position.set(0, 6, 0);
+    this.scene.add(this.sparkLight);
+    this.sparkLightT = 0;
+    this.nextWireSpark = 3 + Math.random() * 6;
+
     const shadowOn = mapSize > 0;
     this.renderer.shadowMap.enabled = shadowOn;
   }
@@ -167,7 +210,7 @@ export class World {
     this.scene.add(this.ground);
     this.collidables.push(this.ground);
 
-    // ---- ruined buildings ----
+    // ---- ruined buildings + windows ----
     const concreteMat = this._mat(T, 'concrete');
     const brickMat = this._mat(T, 'brick');
     const B = [
@@ -182,7 +225,7 @@ export class World {
       [4, 86, 30, 8, 12, -0.12, concreteMat],
     ];
     for (const [x, z, w, h, d, ry, mat] of B) {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, 0.12), mat);
       m.position.set(x, h / 2, z);
       m.rotation.y = ry;
       m.castShadow = true;
@@ -195,6 +238,8 @@ export class World {
       top.rotation.y = ry + (this._rand() - 0.5) * 0.5;
       top.castShadow = true;
       this.scene.add(top);
+
+      this._addBuildingWindows(x, z, w, h, d, ry);
     }
 
     // ---- free-standing ruined walls ----
@@ -212,9 +257,9 @@ export class World {
       this._addCollider(m);
     }
 
-    // ---- crates ----
+    // ---- crates (rounded for light-catching edges) ----
     const woodMat = this._mat(T, 'wood');
-    const crateGeo = new THREE.BoxGeometry(1.15, 1.15, 1.15);
+    const crateGeo = new RoundedBoxGeometry(1.15, 1.15, 1.15, 2, 0.03);
     const CRATES = [
       [10, -12, 0.3], [11.4, -12.2, 0.9], [10.6, -12.1, 0, 1.15],
       [-16, 8, 0.7], [-17.4, 8.4, 1.4],
@@ -279,6 +324,14 @@ export class World {
       head.position.set(x + Math.cos(ry) * 1.35, 4.5, z + Math.sin(ry) * 1.35);
       head.rotation.y = -ry;
       this.scene.add(head);
+      // lamp head glow sprite (the visible bright bulb)
+      const bulb = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.TEX.glow, color: 0xd6e4ff, transparent: true, opacity: 0.75,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      bulb.position.set(x + Math.cos(ry) * 1.35, 4.42, z + Math.sin(ry) * 1.35);
+      bulb.scale.set(1.1, 0.55, 1);
+      this.scene.add(bulb);
       // light cone (volumetric-ish)
       const cone = new THREE.Mesh(
         new THREE.ConeGeometry(2.6, 4.4, 16, 1, true),
@@ -293,7 +346,7 @@ export class World {
       light.position.set(x + Math.cos(ry) * 1.35, 4.4, z + Math.sin(ry) * 1.35);
       this.scene.add(light);
       this._addCollider(pole, 0.05);
-      this.lamps.push({ light, cone, seed: this._rand() * 10, broken: false });
+      this.lamps.push({ light, cone, bulb, seed: this._rand() * 10, broken: false });
     }
 
     // ---- dead trees ----
@@ -370,9 +423,9 @@ export class World {
         map: T.grassBlade, transparent: true, alphaTest: 0.32,
         side: THREE.DoubleSide, roughness: 1, envMapIntensity: 0.15,
       }),
-      CONFIG.fx.grassCount[this.quality]
+      CONFIG.fx.grassCount.high
     );
-    for (let i = 0; i < CONFIG.fx.grassCount[this.quality]; i++) {
+    for (let i = 0; i < CONFIG.fx.grassCount.high; i++) {
       const a = this._rand() * Math.PI * 2;
       const r = 4 + this._rand() * 100;
       dummy.position.set(Math.cos(a) * r, 0.28, Math.sin(a) * r);
@@ -384,6 +437,303 @@ export class World {
     }
     this.grass.instanceMatrix.needsUpdate = true;
     this.scene.add(this.grass);
+  }
+
+  /** NEW: window grid on the arena-facing side of a building, some lit */
+  _addBuildingWindows(x, z, w, h, d, ry) {
+    const T = this.TEX;
+    const winMat = new THREE.MeshStandardMaterial({
+      map: T.window, roughness: 0.25, metalness: 0.4, envMapIntensity: 1.3,
+    });
+    const litBase = new THREE.MeshBasicMaterial({ color: 0xffc98a });
+    // which face points at the arena center?
+    const ax = Math.abs(x) > Math.abs(z) ? 'x' : 'z';
+    const sign = ax === 'x' ? -Math.sign(x) : -Math.sign(z);
+    const faceH = Math.min(h, 8);
+    const rows = Math.max(1, Math.floor(faceH / 2.6));
+    const cols = Math.max(2, Math.floor((ax === 'x' ? d : w) / 2.9));
+    const winW = 1.05, winH = 1.35;
+    const faceOff = (ax === 'x' ? (sign > 0 ? w : -w) : (sign > 0 ? d : -d)) / 2 + 0.07;
+
+    const face = new THREE.Group();
+    for (let r = 0; r < rows; r++) {
+      for (let cIdx = 0; cIdx < cols; cIdx++) {
+        const lit = this._rand() < 0.14;
+        const mat = lit ? litBase.clone() : winMat;
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), mat);
+        const u = (cIdx - (cols - 1) / 2) * 2.9;
+        const y = 2.4 + r * 2.6;
+        if (ax === 'x') {
+          m.position.set(x + faceOff, y, z + u);
+          m.rotation.y = sign > 0 ? Math.PI / 2 : -Math.PI / 2;
+        } else {
+          m.position.set(x + u, y, z + faceOff);
+          m.rotation.y = sign > 0 ? 0 : Math.PI;
+        }
+        // rotate with the building a bit
+        m.rotation.y += ry * 0.4;
+        face.add(m);
+        if (lit) this.litWindows.push({ mat, seed: this._rand() * 10, base: 0.75 + this._rand() * 0.35 });
+      }
+    }
+    this.scene.add(face);
+  }
+
+  /* ==================== NEW v1.1: car wrecks ==================== */
+
+  _buildCars() {
+    const T = this.TEX;
+    const CARS = [
+      // x, z, rotY, paintVariant, missingWheels
+      [-14, -22, 0.7, 0, 1],
+      [30, 26, -2.4, 1, 2],
+      [-44, 38, 0.3, 0, 0],
+      [12, 62, 1.9, 1, 1],
+      [-36, -56, -1.1, 0, 2],
+    ];
+    const paintMats = T.car.map((p) => new THREE.MeshPhysicalMaterial({
+      map: p.map, normalMap: p.normal, roughnessMap: p.rough,
+      roughness: 1, metalness: 0.55, envMapIntensity: 1.0,
+      clearcoat: 0.65, clearcoatRoughness: 0.32,
+    }));
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0x0c1015, roughness: 0.12, metalness: 0.6, envMapIntensity: 1.7,
+    });
+    const rubberMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.95, envMapIntensity: 0.2 });
+    const hubMat = new THREE.MeshStandardMaterial({ map: T.metal.map, roughness: 0.4, metalness: 0.85, envMapIntensity: 1.2 });
+
+    for (const [x, z, ry, variant, missing] of CARS) {
+      const g = new THREE.Group();
+      const paint = paintMats[variant % paintMats.length];
+
+      // body
+      const body = new THREE.Mesh(new RoundedBoxGeometry(1.78, 0.52, 4.2, 2, 0.1), paint);
+      body.position.y = 0.62;
+      body.castShadow = true; body.receiveShadow = true;
+      g.add(body);
+
+      // cabin (glass) + roof
+      const cabin = new THREE.Mesh(new RoundedBoxGeometry(1.58, 0.55, 2.05, 2, 0.08), glassMat);
+      cabin.position.set(0, 1.12, -0.3);
+      cabin.castShadow = true;
+      g.add(cabin);
+      const roof = new THREE.Mesh(new RoundedBoxGeometry(1.62, 0.09, 1.95, 1, 0.03), paint);
+      roof.position.set(0, 1.42, -0.3);
+      g.add(roof);
+
+      // hood + trunk lines (dark insets)
+      const hood = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.02), rubberMat);
+      hood.position.set(0, 0.87, 0.9);
+      g.add(hood);
+
+      // wheels (some missing on wrecks)
+      const wheelGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.25, 14);
+      wheelGeo.rotateZ(Math.PI / 2);
+      const hubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.27, 8);
+      hubGeo.rotateZ(Math.PI / 2);
+      const positions = [
+        [-0.86, 1.35], [0.86, 1.35], [-0.86, -1.35], [0.86, -1.35],
+      ];
+      for (let i = 0; i < positions.length; i++) {
+        if (i < missing) continue;   // wheels torn off
+        const [wx, wz] = positions[i];
+        const w = new THREE.Mesh(wheelGeo, rubberMat);
+        w.position.set(wx, 0.33, wz);
+        w.castShadow = true;
+        g.add(w);
+        const hub = new THREE.Mesh(hubGeo, hubMat);
+        hub.position.set(wx, 0.33, wz);
+        g.add(hub);
+      }
+      // where wheels are gone, the axle rests on a block (sunk look)
+      for (let i = 0; i < missing; i++) {
+        const [wx, wz] = positions[i];
+        const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.5, 6), hubMat);
+        axle.rotateZ(Math.PI / 2);
+        axle.position.set(wx, 0.28, wz);
+        g.add(axle);
+      }
+
+      // broken bumper detail
+      const bumper = new THREE.Mesh(new RoundedBoxGeometry(1.8, 0.16, 0.2, 1, 0.04), hubMat);
+      bumper.position.set(0, 0.34, 2.08);
+      bumper.rotation.z = 0.04;
+      g.add(bumper);
+
+      g.position.set(x, 0, z);
+      g.rotation.y = ry;
+      // sunk / tilted wreck
+      g.rotation.z = (this._rand() - 0.5) * 0.05;
+      g.rotation.x = (this._rand() - 0.5) * 0.03;
+      g.position.y = -0.04;
+      this.scene.add(g);
+      this._addCollider(g, 0.15);
+    }
+  }
+
+  /* ==================== NEW v1.1: chain-link fences ==================== */
+
+  _buildFences() {
+    const T = this.TEX;
+    const postMat = new THREE.MeshStandardMaterial({
+      map: T.metal.map, roughness: 0.6, metalness: 0.7, envMapIntensity: 0.8,
+    });
+    const SECTIONS = [
+      // x, z, length, rotY
+      [-60, 20, 14, 0.1],
+      [-52, 34, 10, 1.15],
+      [40, -20, 12, 0.4],
+      [52, -30, 12, 1.8],
+      [-6, 60, 16, 0.05],
+    ];
+    for (const [x, z, len, ry] of SECTIONS) {
+      const g = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({
+        map: T.fence.clone(), alphaTest: 0.4, side: THREE.DoubleSide,
+        roughness: 0.55, metalness: 0.75, envMapIntensity: 0.5,
+      });
+      mat.map.needsUpdate = true;
+      mat.map.wrapS = mat.map.wrapT = THREE.RepeatWrapping;
+      mat.map.repeat.set(len / 1.9, 1);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(len, 1.85), mat);
+      mesh.position.y = 0.92;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+      // top rail + posts
+      const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, len, 6), postMat);
+      rail.rotation.z = Math.PI / 2;
+      rail.position.y = 1.86;
+      g.add(rail);
+      const postCount = Math.floor(len / 2.6) + 1;
+      for (let p = 0; p < postCount; p++) {
+        const px = -len / 2 + (p / (postCount - 1)) * len;
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.0, 6), postMat);
+        post.position.set(px, 1.0, 0);
+        post.castShadow = true;
+        g.add(post);
+      }
+      g.position.set(x, 0, z);
+      g.rotation.y = ry;
+      this.scene.add(g);
+      // blocks movement, but bullets pass through the mesh gaps: only
+      // add an AABB collider, not a raycast target
+      const dx = Math.cos(ry) * len / 2, dz = -Math.sin(ry) * len / 2;
+      this.aabbs.push({
+        minX: Math.min(x - dx, x + dx) - 0.05, maxX: Math.max(x - dx, x + dx) + 0.05,
+        minZ: Math.min(z - dz, z + dz) - 0.05, maxZ: Math.max(z - dz, z + dz) + 0.05,
+      });
+    }
+  }
+
+  /* ==================== NEW v1.1: power poles + sagging wires ==================== */
+
+  _buildPowerLines() {
+    const T = this.TEX;
+    const poleMat = new THREE.MeshStandardMaterial({
+      map: T.bark.map, normalMap: T.bark.normal, roughness: 0.9, envMapIntensity: 0.3,
+    });
+    const metalMat = new THREE.MeshStandardMaterial({
+      map: T.metal.map, roughness: 0.6, metalness: 0.8, envMapIntensity: 0.8,
+    });
+    const wireMat = new THREE.MeshStandardMaterial({ color: 0x0e1116, roughness: 0.7, metalness: 0.3 });
+    const POLES = [
+      [-30, 48], [6, 56], [42, 44],
+    ];
+    const tops = [];
+    for (const [x, z] of POLES) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.17, 6.6, 8), poleMat);
+      pole.position.set(x, 3.3, z);
+      pole.castShadow = true;
+      this.scene.add(pole);
+      const cross = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.12, 0.12), metalMat);
+      cross.position.set(x, 6.1, z);
+      cross.castShadow = true;
+      this.scene.add(cross);
+      const insA = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.3, 6), metalMat);
+      insA.position.set(x - 0.85, 6.0, z);
+      this.scene.add(insA);
+      const insB = insA.clone();
+      insB.position.x = x + 0.85;
+      this.scene.add(insB);
+      tops.push(new THREE.Vector3(x, 6.15, z));
+      this.aabbs.push({ minX: x - 0.25, maxX: x + 0.25, minZ: z - 0.25, maxZ: z + 0.25 });
+      this.poles.push({ x, z });
+    }
+    // two sagging wires between consecutive poles (both offsets)
+    for (let i = 0; i < tops.length - 1; i++) {
+      const a = tops[i], b = tops[i + 1];
+      for (const off of [-0.85, 0.85]) {
+        const pa = new THREE.Vector3(a.x + off, a.y, a.z);
+        const pb = new THREE.Vector3(b.x + off, b.y, b.z);
+        const mid = pa.clone().add(pb).multiplyScalar(0.5);
+        mid.y -= 1.15;   // sag
+        const curve = new THREE.QuadraticBezierCurve3(pa, mid, pb);
+        const geo = new THREE.TubeGeometry(curve, 24, 0.014, 4, false);
+        const wire = new THREE.Mesh(geo, wireMat);
+        this.scene.add(wire);
+        this.wires.push({ curve, len: pa.distanceTo(pb) });
+      }
+    }
+  }
+
+  /* ==================== NEW v1.1: puddles ==================== */
+
+  _buildPuddles() {
+    const T = this.TEX;
+    const spots = [];
+    // puddles collect near buildings, cars and craters
+    const near = [
+      [-14, -22], [30, 26], [-44, 38], [12, 62],   // cars
+      [-20, -12], [24, 34], [-52, 26], [8, -18],   // open ground
+      [-60, -40], [55, 30], [-12, 52], [40, -34],
+    ];
+    for (const [x, z] of near) spots.push([x + (this._rand() - 0.5) * 6, z + (this._rand() - 0.5) * 6]);
+
+    for (const [x, z] of spots) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x0b1220, roughness: 0.05, metalness: 0.88,
+        envMapIntensity: 2.1, transparent: true, opacity: 0.82,
+        alphaMap: T.puddleMask, depthWrite: false,
+      });
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.8), mat);
+      m.rotation.x = -Math.PI / 2;
+      m.rotation.z = this._rand() * Math.PI * 2;
+      const s = 0.6 + this._rand() * 1.5;
+      m.scale.set(s, s, 1);
+      m.position.set(x, 0.013, z);
+      m.renderOrder = 1;
+      this.scene.add(m);
+      this.puddles.push(m);
+    }
+  }
+
+  /* ==================== NEW v1.1: drifting ground-mist cards ==================== */
+
+  _buildFogCards() {
+    const T = this.TEX;
+    const count = CONFIG.fx.fogCards.high;
+    for (let i = 0; i < count; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: T.smoke, color: 0x33465e, transparent: true,
+        opacity: 0.055 + this._rand() * 0.05, depthWrite: false,
+      });
+      const w = 26 + this._rand() * 26;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.55), mat);
+      m.rotation.x = -Math.PI / 2;
+      m.rotation.z = this._rand() * Math.PI * 2;
+      const card = {
+        mesh: m,
+        r: 18 + this._rand() * 72,
+        a: this._rand() * Math.PI * 2,
+        speed: 0.012 + this._rand() * 0.02,
+        y: 0.5 + this._rand() * 2.2,
+        rotSpeed: (this._rand() - 0.5) * 0.02,
+      };
+      m.position.set(Math.cos(card.a) * card.r, card.y, Math.sin(card.a) * card.r);
+      m.renderOrder = 2;
+      this.scene.add(m);
+      this.fogCards.push(card);
+    }
   }
 
   /* ==================== rain ==================== */
@@ -515,6 +865,46 @@ export class World {
       const f = 0.75 + 0.25 * Math.sin(time * 13.7 + l.seed * 9) + (Math.random() < 0.008 ? -0.55 : 0);
       l.light.intensity = 34 * Math.max(0.1, f);
       l.cone.material.opacity = 0.045 * Math.max(0.1, f) / 0.75;
+      l.bulb.material.opacity = 0.75 * Math.max(0.1, f);
+    }
+
+    // NEW: drifting clouds + moon halo breathing
+    this.clouds.rotation.y += dt * 0.004;
+    this.moonHalo.material.opacity = 0.3 + 0.05 * Math.sin(time * 0.7);
+
+    // NEW: lit window flicker (dying fluorescents)
+    for (const w of this.litWindows) {
+      const f = 0.55 + 0.45 * Math.sin(time * (2.3 + w.seed * 0.7) + w.seed * 13) > 0.7
+        ? w.base * (0.7 + 0.3 * Math.sin(time * 31 + w.seed))
+        : w.base * 0.12;
+      w.mat.color.setRGB(f, f * 0.77, f * 0.45);
+    }
+
+    // NEW: ground-mist cards drift
+    for (const c of this.fogCards) {
+      c.a += c.speed * dt;
+      c.mesh.rotation.z += c.rotSpeed * dt;
+      c.mesh.position.set(Math.cos(c.a) * c.r, c.y, Math.sin(c.a) * c.r);
+    }
+
+    // NEW: occasional electric sparks on the sagging power wires
+    this.nextWireSpark -= dt;
+    if (this.nextWireSpark <= 0 && this.wires.length > 0) {
+      this.nextWireSpark = 4 + Math.random() * 9;
+      const wire = this.wires[(Math.random() * this.wires.length) | 0];
+      const t = 0.25 + Math.random() * 0.5;
+      const p = wire.curve.getPoint(t);
+      this.particles.sparks(p, new THREE.Vector3(0, 1, 0));
+      this.particles.sparks(p, new THREE.Vector3(0, 1, 0));
+      this.sparkLight.position.copy(p);
+      this.sparkLightT = 0.14;
+      if (audio) audio.zap(Math.hypot(p.x - camPos.x, p.z - camPos.z), (p.x - camPos.x) * 0.02);
+    }
+    if (this.sparkLightT > 0) {
+      this.sparkLightT -= dt;
+      this.sparkLight.intensity = this.sparkLightT > 0 ? 30 * (0.4 + Math.random() * 0.6) : 0;
+    } else {
+      this.sparkLight.intensity = 0;
     }
 
     // rain follows camera
@@ -530,21 +920,23 @@ export class World {
         L.next = CONFIG.fx.lightningEvery[0] + Math.random() *
           (CONFIG.fx.lightningEvery[1] - CONFIG.fx.lightningEvery[0]);
       }
+      this.flashAmt = Math.max(0, this.flashAmt - dt * 4);
     } else {
       L.t += dt;
       // double-strike envelope
       let inten = 0;
-      if (L.t < 0.09) inten = 9;
-      else if (L.t < 0.16) inten = 1.2;
-      else if (L.t < 0.26) inten = 6.5;
-      else if (L.t < 0.4) inten = 2;
+      if (L.t < 0.09) inten = 11;
+      else if (L.t < 0.16) inten = 1.4;
+      else if (L.t < 0.26) inten = 8;
+      else if (L.t < 0.4) inten = 2.4;
       if (inten > 4 && L.strikes < 2) {
         L.strikes++;
         if (audio) audio.thunder(0.8 + Math.random() * 1.8, 0.35 + Math.random() * 0.3);
       }
       this.flashLight.intensity = inten;
+      this.flashAmt = Math.min(1, inten / 11);
       // brighten fog & hemisphere during flash
-      const f = Math.min(1, inten / 9);
+      const f = this.flashAmt;
       this.fog.color.copy(L.baseFogColor).lerp(new THREE.Color(0x1d2942), f * 0.8);
       this.hemi.intensity = 0.85 + f * 1.6;
       this.ambient.intensity = 0.5 + f * 0.5;
@@ -582,6 +974,11 @@ export class World {
     }
     this.grass.count = Math.min(CONFIG.fx.grassCount[q], CONFIG.fx.grassCount.high);
     this.grass.visible = CONFIG.fx.grassCount[q] > 0;
+    // NEW: puddles / mist cards visibility
+    const puddles = CONFIG.fx.puddleCount[q];
+    this.puddles.forEach((m, i) => { m.visible = i < puddles; });
+    const cards = CONFIG.fx.fogCards[q];
+    this.fogCards.forEach((c, i) => { c.mesh.visible = i < cards; });
   }
 
   reset() {
