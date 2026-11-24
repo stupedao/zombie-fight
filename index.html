@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>DEAD HOURS - Zombie Wave Survival</title>
+  <meta name="description" content="First-person wave-based zombie survival shooter. Three.js, fully procedural, runs entirely in your browser." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2305070d'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23ff4a3d' stroke-width='2'/%3E%3Cpath d='M16 2v7M16 23v7M2 16h7M23 16h7' stroke='%23ff4a3d' stroke-width='2'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/styles/main.css" />
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Screen effects (always visible, opacity driven by JS) -->
+  <div id="vignette"></div>
+  <div id="damage-flash"></div>
+
+  <!-- In-game HUD -->
+  <div id="hud" class="hidden">
+    <div id="crosshair">
+      <span class="ch t"></span><span class="ch b"></span>
+      <span class="ch l"></span><span class="ch r"></span>
+      <span class="ch dot"></span>
+    </div>
+    <div id="hitmarker"><span></span><span></span><span></span><span></span></div>
+
+    <div id="hud-wave" class="hud-block">
+      <div class="hud-label">WAVE</div>
+      <div id="wave-num" class="hud-value">1</div>
+      <div id="zombies-left" class="hud-sub"></div>
+    </div>
+
+    <div id="hud-score" class="hud-block">
+      <div class="hud-label">SCORE</div>
+      <div id="score-num" class="hud-value">0</div>
+    </div>
+
+    <div id="hud-health" class="hud-block">
+      <div class="hud-label">HEALTH <span id="hp-num">100</span></div>
+      <div id="hp-bar"><div id="hp-fill"></div></div>
+    </div>
+
+    <div id="hud-ammo" class="hud-block">
+      <div id="weapon-name" class="hud-label">M9 SIDEARM</div>
+      <div class="ammo-line"><span id="ammo-mag">12</span><span id="ammo-reserve">/ &#8734;</span></div>
+      <div id="reload-hint" class="hidden">RELOADING...</div>
+    </div>
+
+    <div id="boost-timer" class="hidden"><div id="boost-fill"></div><span>DMG x2</span></div>
+    <div id="inter-timer" class="hidden"></div>
+    <div id="banner"><h2 id="banner-main"></h2><p id="banner-sub"></p></div>
+    <div id="toasts"></div>
+    <div id="fps" class="hidden"></div>
+  </div>
+
+  <!-- Start menu -->
+  <div id="menu" class="overlay">
+    <div class="panel menu-panel">
+      <h1 class="game-title">DEAD HOURS</h1>
+      <p class="game-sub">WAVE SURVIVAL - THEY COME AT NIGHT</p>
+      <button id="btn-play" class="btn primary">PLAY</button>
+      <button id="btn-controls" class="btn">CONTROLS</button>
+      <div class="setting-row">
+        <span class="setting-label">QUALITY</span>
+        <div class="seg">
+          <button class="seg-btn" data-quality="low">LOW</button>
+          <button class="seg-btn" data-quality="medium">MED</button>
+          <button class="seg-btn" data-quality="high">HIGH</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">VOLUME</span>
+        <input class="volume-slider" type="range" min="0" max="100" value="70" />
+      </div>
+      <div class="board" id="menu-board"></div>
+      <p class="hint">Headphones recommended. WASD to move, mouse to aim.</p>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div id="controls-panel" class="overlay hidden">
+    <div class="panel">
+      <h2 class="panel-title">CONTROLS</h2>
+      <table class="controls-table">
+        <tr><td class="key">W A S D</td><td>Move</td></tr>
+        <tr><td class="key">MOUSE</td><td>Look</td></tr>
+        <tr><td class="key">LEFT CLICK</td><td>Shoot (hold for auto)</td></tr>
+        <tr><td class="key">R</td><td>Reload</td></tr>
+        <tr><td class="key">1 / 2 / 3</td><td>Pistol / Rifle / Shotgun</td></tr>
+        <tr><td class="key">SHIFT</td><td>Sprint</td></tr>
+        <tr><td class="key">SPACE</td><td>Jump</td></tr>
+        <tr><td class="key">ESC or P</td><td>Pause</td></tr>
+        <tr><td class="key">F</td><td>FPS counter</td></tr>
+      </table>
+      <p class="hint">Headshots deal x2 damage. Zombies drop health, ammo and damage boosts.</p>
+      <button id="btn-controls-back" class="btn">BACK</button>
+    </div>
+  </div>
+
+  <!-- Pause -->
+  <div id="pause" class="overlay hidden">
+    <div class="panel">
+      <h2 class="panel-title">PAUSED</h2>
+      <button id="btn-resume" class="btn primary">RESUME</button>
+      <button id="btn-restart" class="btn">RESTART</button>
+      <button id="btn-quit" class="btn">QUIT TO MENU</button>
+      <div class="setting-row">
+        <span class="setting-label">QUALITY</span>
+        <div class="seg">
+          <button class="seg-btn" data-quality="low">LOW</button>
+          <button class="seg-btn" data-quality="medium">MED</button>
+          <button class="seg-btn" data-quality="high">HIGH</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">VOLUME</span>
+        <input class="volume-slider" type="range" min="0" max="100" value="70" />
+      </div>
+      <p class="hint">If the cursor stays visible after resuming, click the screen once.</p>
+    </div>
+  </div>
+
+  <!-- Game over -->
+  <div id="gameover" class="overlay hidden">
+    <div class="panel go-panel">
+      <h1 class="game-title died">YOU DIED</h1>
+      <div class="stats-grid">
+        <div class="stat"><span class="stat-value" id="go-score">0</span><span class="stat-label">SCORE</span></div>
+        <div class="stat"><span class="stat-value" id="go-wave">1</span><span class="stat-label">WAVE</span></div>
+        <div class="stat"><span class="stat-value" id="go-kills">0</span><span class="stat-label">KILLS</span></div>
+        <div class="stat"><span class="stat-value" id="go-headshots">0</span><span class="stat-label">HEADSHOTS</span></div>
+        <div class="stat"><span class="stat-value" id="go-accuracy">0%</span><span class="stat-label">ACCURACY</span></div>
+      </div>
+      <div class="submit-row">
+        <input id="name-input" maxlength="16" placeholder="YOUR NAME" autocomplete="off" />
+        <button id="btn-submit" class="btn primary">SAVE SCORE</button>
+      </div>
+      <p id="save-status" class="hint"></p>
+      <div class="board" id="go-board"></div>
+      <button id="btn-again" class="btn primary">PLAY AGAIN</button>
+      <button id="btn-menu" class="btn">MAIN MENU</button>
+    </div>
+  </div>
+
+  <!-- Mobile notice + WebGL error -->
+  <div id="mobile-notice" class="hidden">
+    Best played on desktop with mouse + keyboard.
+    <button id="mobile-notice-close">OK</button>
+  </div>
+  <div id="webgl-error" class="overlay hidden">
+    <div class="panel">
+      <h2 class="panel-title">WEBGL UNAVAILABLE</h2>
+      <p class="hint">Your browser or GPU driver could not create a WebGL context.
+      Try updating your browser or enabling hardware acceleration.</p>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
