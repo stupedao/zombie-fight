@@ -4,6 +4,8 @@
    sprite and the environment map are painted here on 2D canvases
    at load time. Sobel-derived normal maps give the PBR shading
    its depth, fBm value-noise drives all the grime.
+   v1.1 adds: rusted car paint, chain-link fence, window glass,
+   puddle masks, a drifting cloud layer and acid glow sprites.
    ============================================================ */
 
 import * as THREE from 'three';
@@ -333,6 +335,194 @@ function paintBark(seed = 53) {
   return c;
 }
 
+/* ---------- NEW v1.1: rusted car paint ---------- */
+
+function paintCarPaint(seed = 131, tint = [96, 104, 116]) {
+  const S = 256;
+  const c = makeCanvas(S, S);
+  const n = makeNoise(seed);
+  paintPixels(c, (x, y) => {
+    // clearcoat gloss variation + fine scratches
+    const gloss = n.fbm(x / 60 + 20, y / 60 + 20, 3);
+    const dirt = n.fbm(x / 22 + 70, y / 22 + 70, 3);
+    let v = 0.82 + (gloss - 0.5) * 0.25;
+    let col = [tint[0] * v, tint[1] * v, tint[2] * v];
+    // dirt film
+    if (dirt > 0.6) col = mix(col, [44, 42, 38], (dirt - 0.6) * 1.6);
+    return [col[0], col[1], col[2], 255];
+  });
+  const ctx = c.getContext('2d');
+  // rust blooms eating through the paint
+  for (let k = 0; k < 12; k++) {
+    const x = n.rand() * S, y = n.rand() * S;
+    const r = 8 + n.rand() * 30;
+    const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+    const deep = n.rand() > 0.5;
+    g.addColorStop(0, deep ? 'rgba(70,32,14,0.95)' : 'rgba(120,62,30,0.8)');
+    g.addColorStop(0.55, 'rgba(110,58,28,0.6)');
+    g.addColorStop(1, 'rgba(90,48,24,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // scratches
+  ctx.lineCap = 'round';
+  for (let k = 0; k < 22; k++) {
+    const x = n.rand() * S, y = n.rand() * S;
+    const a = n.rand() * Math.PI * 2, len = 6 + n.rand() * 24;
+    ctx.strokeStyle = `rgba(${150 + n.rand() * 60 | 0},${140 + n.rand() * 50 | 0},${130 + n.rand() * 40 | 0},${0.12 + n.rand() * 0.25})`;
+    ctx.lineWidth = 0.7 + n.rand();
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+    ctx.stroke();
+  }
+  return c;
+}
+
+/* ---------- NEW v1.1: chain-link fence ---------- */
+
+function paintFence(seed = 137) {
+  const S = 128;
+  const c = makeCanvas(S, S);
+  const ctx = c.getContext('2d');
+  const n = makeNoise(seed);
+  ctx.clearRect(0, 0, S, S);
+  const spacing = 16;
+  ctx.lineCap = 'round';
+  // two diagonal directions => diamond lattice
+  for (const dir of [1, -1]) {
+    for (let off = -S; off < S * 2; off += spacing) {
+      const rust = n.rand();
+      ctx.strokeStyle = rust > 0.7
+        ? `rgba(${118 + rust * 40 | 0},${68 + rust * 20 | 0},40,0.9)`
+        : `rgba(${158 + rust * 30 | 0},${164 + rust * 20 | 0},${170 + rust * 10 | 0},0.9)`;
+      ctx.lineWidth = 2.1 + n.rand() * 0.5;
+      ctx.beginPath();
+      if (dir === 1) { ctx.moveTo(off, 0); ctx.lineTo(off + S, S); }
+      else { ctx.moveTo(off, S); ctx.lineTo(off + S, 0); }
+      ctx.stroke();
+    }
+  }
+  return c;
+}
+
+/* ---------- NEW v1.1: window glass ---------- */
+
+function paintWindow(seed = 149) {
+  const S = 128;
+  const c = makeCanvas(S, S);
+  const ctx = c.getContext('2d');
+  const n = makeNoise(seed);
+  // pane layout 2x2 with frame cross
+  ctx.fillStyle = '#181d26';
+  ctx.fillRect(0, 0, S, S);
+  // inner panes - very dark glass with grime
+  const pad = 9, pane = (S - pad * 2) / 2;
+  for (const [px, py] of [[pad, pad], [pad + pane + 2, pad], [pad, pad + pane + 2], [pad + pane + 2, pad + pane + 2]]) {
+    const g = ctx.createLinearGradient(px, py, px + pane, py + pane);
+    g.addColorStop(0, '#242e3c');
+    g.addColorStop(0.5, '#151b26');
+    g.addColorStop(1, '#1d2733');
+    ctx.fillStyle = g;
+    ctx.fillRect(px, py, pane, pane);
+    // faint reflection streak
+    ctx.fillStyle = 'rgba(120,150,190,0.05)';
+    ctx.beginPath();
+    ctx.moveTo(px + pane * 0.15, py);
+    ctx.lineTo(px + pane * 0.45, py);
+    ctx.lineTo(px + pane * 0.75, py + pane);
+    ctx.lineTo(px + pane * 0.45, py + pane);
+    ctx.closePath();
+    ctx.fill();
+    // grime speckle
+    for (let k = 0; k < 26; k++) {
+      const rx = px + n.rand() * pane, ry = py + n.rand() * pane;
+      ctx.fillStyle = `rgba(60,58,52,${0.04 + n.rand() * 0.1})`;
+      ctx.fillRect(rx, ry, 1 + n.rand() * 3, 1 + n.rand() * 3);
+    }
+    // occasional crack
+    if (n.rand() > 0.72) {
+      ctx.strokeStyle = 'rgba(200,215,235,0.22)';
+      ctx.lineWidth = 0.8;
+      const cx = px + pane * 0.3 + n.rand() * pane * 0.4;
+      const cy = py + pane * 0.3 + n.rand() * pane * 0.4;
+      ctx.beginPath(); ctx.moveTo(cx, cy);
+      let a = n.rand() * Math.PI * 2, x = cx, y = cy;
+      for (let s = 0; s < 4; s++) {
+        a += (n.rand() - 0.5) * 1.4;
+        x += Math.cos(a) * 9; y += Math.sin(a) * 9;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+  return c;
+}
+
+/* ---------- NEW v1.1: puddle alpha mask ---------- */
+
+function paintPuddleMask(seed = 157) {
+  const S = 128;
+  const c = makeCanvas(S, S);
+  const ctx = c.getContext('2d');
+  const n = makeNoise(seed);
+  // opaque black background - the WHITE blob is what shows (alphaMap reads .g)
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, S, S);
+  // irregular blob: radial with noise-modulated edge
+  const cx = S / 2, cy = S / 2;
+  const pts = 26;
+  ctx.beginPath();
+  for (let k = 0; k <= pts; k++) {
+    const a = (k / pts) * Math.PI * 2;
+    const rMod = 0.62 + n.fbm(Math.cos(a) * 2 + 5, Math.sin(a) * 2 + 5, 3) * 0.55;
+    const r = (S / 2 - 6) * rMod;
+    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.82;
+    if (k === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  const g = ctx.createRadialGradient(cx, cy, S * 0.16, cx, cy, S * 0.5);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.8, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1, 'rgba(255,255,255,0.25)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  return c;
+}
+
+/* ---------- NEW v1.1: drifting cloud layer ---------- */
+
+function paintClouds(seed = 163) {
+  const W = 1024, H = 512;
+  const c = makeCanvas(W, H);
+  const ctx = c.getContext('2d');
+  const n = makeNoise(seed);
+  ctx.clearRect(0, 0, W, H);
+  // soft elongated dark clouds with moon-lit tops
+  for (let k = 0; k < 26; k++) {
+    const x = n.rand() * W, y = H * (0.34 + n.rand() * 0.5);
+    const rw = 110 + n.rand() * 220, rh = 20 + n.rand() * 40;
+    const lit = n.rand();
+    const g = ctx.createRadialGradient(x, y, 1, x, y, rw);
+    if (lit > 0.62) {
+      // moonlit edge - silver top, dark body
+      g.addColorStop(0, 'rgba(52,68,94,0.5)');
+      g.addColorStop(0.7, 'rgba(30,40,58,0.34)');
+      g.addColorStop(1, 'rgba(24,32,48,0)');
+    } else {
+      g.addColorStop(0, 'rgba(14,20,32,0.52)');
+      g.addColorStop(1, 'rgba(14,20,32,0)');
+    }
+    ctx.fillStyle = g;
+    ctx.save();
+    ctx.translate(x, y); ctx.scale(1, rh / rw); ctx.translate(-x, -y);
+    ctx.beginPath(); ctx.arc(x, y, rw, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  return c;
+}
+
 function paintZombieSkin(seed = 61, hue = 96) {
   const S = 256;
   const c = makeCanvas(S, S);
@@ -641,6 +831,26 @@ export function buildTextures() {
     normal: tex(normalFromCanvas(bark, 2.6), { srgb: false, repeat: [1.5, 3] }),
   };
 
+  // ---- NEW v1.1: wrecked cars / fence / windows / puddles / clouds ----
+  const carA = paintCarPaint(131, [86, 94, 108]);   // gunmetal blue-grey
+  const carB = paintCarPaint(139, [104, 78, 60]);   // baked brown
+  T.car = [
+    {
+      map: tex(carA),
+      normal: tex(normalFromCanvas(carA, 1.1), { srgb: false }),
+      rough: tex(roughnessFromCanvas(carA, 0.42, 0.3), { srgb: false }),
+    },
+    {
+      map: tex(carB),
+      normal: tex(normalFromCanvas(carB, 1.1), { srgb: false }),
+      rough: tex(roughnessFromCanvas(carB, 0.42, 0.3), { srgb: false }),
+    },
+  ];
+  T.fence = tex(paintFence());
+  T.window = tex(paintWindow());
+  T.puddleMask = tex(paintPuddleMask(), { srgb: false });
+  T.clouds = tex(paintClouds());
+
   // ---- zombies ----
   T.skin = [];
   for (let v = 0; v < 3; v++) {
@@ -682,6 +892,10 @@ export function buildTextures() {
   T.blood = tex(paintBlood());
   T.hole = tex(paintHole());
   T.grassBlade = tex(paintGrassBlade());
+  // NEW: toxic green glow for spitter acid
+  T.acidGlow = tex(radialSprite(64, [
+    [0, 'rgba(210,255,150,1)'], [0.3, 'rgba(140,240,60,0.75)'], [0.65, 'rgba(80,180,30,0.3)'], [1, 'rgba(40,120,20,0)'],
+  ]));
 
   return T;
 }
