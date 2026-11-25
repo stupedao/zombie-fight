@@ -273,11 +273,10 @@ export class UI {
 
   renderBoard(el, entries, highlightName) {
     if (!entries || entries.length === 0) {
-      el.innerHTML = '<div class="board-title">LEADERBOARD - LOCAL (OFFLINE)</div><div class="empty">No survivors yet. Be the first.</div>';
+      el.innerHTML = '<div class="board-title">LEADERBOARD - LOCAL</div><div class="empty">No survivors yet. Be the first.</div>';
       return;
     }
-    const offline = entries.offline ? ' - LOCAL (OFFLINE)' : '';
-    let html = `<div class="board-title">LEADERBOARD${offline}</div><ol>`;
+    let html = '<div class="board-title">LEADERBOARD - LOCAL</div><ol>';
     entries.forEach((e, i) => {
       const me = (highlightName && e.name === highlightName) ? ' me' : '';
       html += `<li class="${me}"><span class="rk">${i + 1}</span><span class="nm">${escapeHtml(e.name)}</span><span class="wv">W${e.wave}</span><span class="sc">${e.score.toLocaleString()}</span></li>`;
